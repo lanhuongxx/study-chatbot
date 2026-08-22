@@ -6,7 +6,7 @@ load_dotenv()
 
 MONGO_URL = os.getenv("MONGODB_URL")
 client = AsyncIOMotorClient(MONGO_URL)
-database = client["study_chatbot_db"]  # Tên database của bạn
+database = client["study-chatbot-org"]  # Tên database của bạn
 
 async def check_connection():
     try:
