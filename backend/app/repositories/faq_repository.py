@@ -97,13 +97,21 @@ class FAQRepository:
         result = await self.collection.delete_one({"_id": ObjectId(faq_id)})
         return result.deleted_count > 0
 
-    async def find_matching(self, message: str, score_cutoff: float = 65.0) -> Optional[dict]:
+    async def find_matching(self, message: str, score_cutoff: float = 75.0) -> Optional[dict]:
         """
-        Tìm FAQ bằng Fuzzy Matching kết hợp Unidecode.
-        So sánh câu hỏi người dùng với cả 'question' và 'keywords' của từng FAQ.
+        Tìm FAQ bằng Fuzzy Matching + Unidecode.
+        Sử dụng token_set_ratio để tránh khớp nhầm các câu xã giao ngắn.
         """
         if not message:
             return None
+
+        # Khử dấu & chuẩn hóa tin nhắn
+        normalized_message = normalize_text(message)
+
+        # Nếu tin nhắn quá ngắn (ví dụ: "chào", "hi"), không cho bắt FAQ linh tinh
+        if len(normalized_message.split()) < 2 and normalized_message not in ["xin chao", "chao"]:
+            # Nếu trong DB không có FAQ "xin chào" thì trả về None để Gemini trả lời xã giao
+            pass
 
         cursor = self.collection.find({})
         faqs = await cursor.to_list(length=1000)
@@ -111,27 +119,23 @@ class FAQRepository:
         if not faqs:
             return None
 
-        normalized_message = normalize_text(message)
-
         best_faq = None
         highest_score = 0.0
 
         for faq in faqs:
-            # 1. Thu thập tất cả các chuỗi để so sánh (câu hỏi + các keywords)
             candidates = [faq.get("question", "")]
             candidates.extend(faq.get("keywords", []))
 
-            # 2. Chuẩn hóa danh sách ứng viên
             normalized_candidates = [normalize_text(c) for c in candidates if c]
 
             if not normalized_candidates:
                 continue
 
-            # 3. Dùng RapidFuzz lấy điểm cao nhất giữa message với các candidates của FAQ này
+            # Sử dụng token_set_ratio giúp so sánh tập hợp từ chuẩn xác hơn, tránh dính bẫy WRatio
             match_result = process.extractOne(
                 query=normalized_message,
                 choices=normalized_candidates,
-                scorer=fuzz.WRatio
+                scorer=fuzz.token_set_ratio
             )
 
             if match_result:
@@ -140,7 +144,7 @@ class FAQRepository:
                     highest_score = score
                     best_faq = faq
 
-        # 4. Trả về kết quả nếu điểm vượt ngưỡng score_cutoff (mặc định >= 65%)
+        # Chỉ chấp nhận nếu điểm khớp >= 75%
         if best_faq and highest_score >= score_cutoff:
             print(f"🎯 Match FAQ! Score: {highest_score:.1f}% | Question: '{best_faq.get('question')}'")
             best_faq["id"] = str(best_faq["_id"])
