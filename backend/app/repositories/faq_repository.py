@@ -109,47 +109,34 @@ class FAQRepository:
 
     async def find_matching(self, message: str) -> Optional[dict]:
         """
-        Tìm FAQ phù hợp với câu hỏi của sinh viên
-        dựa trên keywords và nội dung question.
+        Tìm FAQ phù hợp nhất dựa trên tổng số từ khóa (keywords) trùng khớp.
         """
-
         message_lower = message.lower().strip()
-
-        # 1. Tìm theo keywords
         cursor = self.collection.find({})
+
+        best_match = None
+        max_matched_score = 0
 
         async for doc in cursor:
             keywords = doc.get("keywords", [])
+            score = 0
 
+            # Tính điểm dựa trên số lượng keyword xuất hiện trong tin nhắn
             for keyword in keywords:
-                if keyword.lower().strip() in message_lower:
+                kw_clean = keyword.lower().strip()
+                if kw_clean and kw_clean in message_lower:
+                    # Từ khóa dài (như "điện toán đám mây") được cộng nhiều điểm hơn từ ngắn
+                    score += len(kw_clean.split())
 
-                    doc["id"] = str(doc["_id"])
-                    del doc["_id"]
+            # Cập nhật bản ghi có điểm khớp cao nhất
+            if score > max_matched_score:
+                max_matched_score = score
+                best_match = doc
 
-                    return doc
-
-        # 2. Nếu không khớp keyword,
-        # thử tìm theo nội dung question
-        cursor = self.collection.find({})
-
-        async for doc in cursor:
-
-            question = doc.get("question", "").lower()
-
-            question_words = set(question.split())
-            message_words = set(message_lower.split())
-
-            common_words = question_words.intersection(
-                message_words
-            )
-
-            # Có ít nhất 2 từ trùng nhau
-            if len(common_words) >= 2:
-
-                doc["id"] = str(doc["_id"])
-                del doc["_id"]
-
-                return doc
+        # Chỉ trả về khi điểm khớp đạt ngưỡng an toàn (khớp ít nhất 1 từ khóa có nghĩa)
+        if best_match and max_matched_score >= 1:
+            best_match["id"] = str(best_match["_id"])
+            del best_match["_id"]
+            return best_match
 
         return None
