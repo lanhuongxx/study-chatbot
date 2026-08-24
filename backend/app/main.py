@@ -151,3 +151,16 @@ async def get_messages():
             status_code=500,
             detail=f"Lỗi khi đọc messages: {str(e)}"
         )
+
+
+# ============================================================
+# 10. Cấu hình CORS cho phép Frontend truy cập
+# ============================================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Hoặc dán URL Frontend sau khi deploy
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
