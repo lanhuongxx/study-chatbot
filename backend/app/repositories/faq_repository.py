@@ -1,7 +1,20 @@
-from bson import ObjectId
-from typing import List, Optional
-from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import re
+from typing import List, Optional
+from bson import ObjectId
+from motor.motor_asyncio import AsyncIOMotorClient
+from unidecode import unidecode
+from rapidfuzz import process, fuzz
+
+
+def normalize_text(text: str) -> str:
+    """Chuyển chữ thường, khử dấu tiếng Việt và xóa ký tự đặc biệt."""
+    if not text:
+        return ""
+    text = text.lower().strip()
+    text = unidecode(text)
+    text = re.sub(r'[^\w\s]', '', text)
+    return text
 
 
 class FAQRepository:
@@ -10,7 +23,6 @@ class FAQRepository:
         if db_client:
             self.db = db_client["study_chatbot_db"]
         else:
-            # Tự động lấy URI từ env nếu không truyền client
             mongo_url = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
             client = AsyncIOMotorClient(mongo_url)
             self.db = client["study_chatbot_db"]
@@ -23,48 +35,34 @@ class FAQRepository:
         limit: int = 20,
         category: Optional[str] = None
     ) -> List[dict]:
-
         query = {}
-
         if category:
             query["category"] = category
 
         cursor = self.collection.find(query).skip(skip).limit(limit)
-
         faqs = []
-
         async for doc in cursor:
             doc["id"] = str(doc["_id"])
             del doc["_id"]
             faqs.append(doc)
-
         return faqs
 
     async def get_by_id(self, faq_id: str) -> Optional[dict]:
-
         if not ObjectId.is_valid(faq_id):
             return None
 
-        doc = await self.collection.find_one(
-            {"_id": ObjectId(faq_id)}
-        )
-
+        doc = await self.collection.find_one({"_id": ObjectId(faq_id)})
         if doc:
             doc["id"] = str(doc["_id"])
             del doc["_id"]
             return doc
-
         return None
 
     async def create(self, faq_data: dict) -> dict:
-
         result = await self.collection.insert_one(faq_data)
-
         faq_data["id"] = str(result.inserted_id)
-
         if "_id" in faq_data:
             del faq_data["_id"]
-
         return faq_data
 
     async def update(
@@ -72,15 +70,11 @@ class FAQRepository:
         faq_id: str,
         update_data: dict
     ) -> Optional[dict]:
-
         if not ObjectId.is_valid(faq_id):
             return None
 
-        # Chỉ cập nhật các trường được truyền lên
         filtered_data = {
-            k: v
-            for k, v in update_data.items()
-            if v is not None
+            k: v for k, v in update_data.items() if v is not None
         }
 
         if not filtered_data:
@@ -97,46 +91,61 @@ class FAQRepository:
         return None
 
     async def delete(self, faq_id: str) -> bool:
-
         if not ObjectId.is_valid(faq_id):
             return False
 
-        result = await self.collection.delete_one(
-            {"_id": ObjectId(faq_id)}
-        )
-
+        result = await self.collection.delete_one({"_id": ObjectId(faq_id)})
         return result.deleted_count > 0
 
-    async def find_matching(self, message: str) -> Optional[dict]:
+    async def find_matching(self, message: str, score_cutoff: float = 65.0) -> Optional[dict]:
         """
-        Tìm FAQ phù hợp nhất dựa trên tổng số từ khóa (keywords) trùng khớp.
+        Tìm FAQ bằng Fuzzy Matching kết hợp Unidecode.
+        So sánh câu hỏi người dùng với cả 'question' và 'keywords' của từng FAQ.
         """
-        message_lower = message.lower().strip()
+        if not message:
+            return None
+
         cursor = self.collection.find({})
+        faqs = await cursor.to_list(length=1000)
 
-        best_match = None
-        max_matched_score = 0
+        if not faqs:
+            return None
 
-        async for doc in cursor:
-            keywords = doc.get("keywords", [])
-            score = 0
+        normalized_message = normalize_text(message)
 
-            # Tính điểm dựa trên số lượng keyword xuất hiện trong tin nhắn
-            for keyword in keywords:
-                kw_clean = keyword.lower().strip()
-                if kw_clean and kw_clean in message_lower:
-                    # Từ khóa dài (như "điện toán đám mây") được cộng nhiều điểm hơn từ ngắn
-                    score += len(kw_clean.split())
+        best_faq = None
+        highest_score = 0.0
 
-            # Cập nhật bản ghi có điểm khớp cao nhất
-            if score > max_matched_score:
-                max_matched_score = score
-                best_match = doc
+        for faq in faqs:
+            # 1. Thu thập tất cả các chuỗi để so sánh (câu hỏi + các keywords)
+            candidates = [faq.get("question", "")]
+            candidates.extend(faq.get("keywords", []))
 
-        # Chỉ trả về khi điểm khớp đạt ngưỡng an toàn (khớp ít nhất 1 từ khóa có nghĩa)
-        if best_match and max_matched_score >= 1:
-            best_match["id"] = str(best_match["_id"])
-            del best_match["_id"]
-            return best_match
+            # 2. Chuẩn hóa danh sách ứng viên
+            normalized_candidates = [normalize_text(c) for c in candidates if c]
+
+            if not normalized_candidates:
+                continue
+
+            # 3. Dùng RapidFuzz lấy điểm cao nhất giữa message với các candidates của FAQ này
+            match_result = process.extractOne(
+                query=normalized_message,
+                choices=normalized_candidates,
+                scorer=fuzz.WRatio
+            )
+
+            if match_result:
+                _, score, _ = match_result
+                if score > highest_score:
+                    highest_score = score
+                    best_faq = faq
+
+        # 4. Trả về kết quả nếu điểm vượt ngưỡng score_cutoff (mặc định >= 65%)
+        if best_faq and highest_score >= score_cutoff:
+            print(f"🎯 Match FAQ! Score: {highest_score:.1f}% | Question: '{best_faq.get('question')}'")
+            best_faq["id"] = str(best_faq["_id"])
+            if "_id" in best_faq:
+                del best_faq["_id"]
+            return best_faq
 
         return None

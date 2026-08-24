@@ -1,8 +1,11 @@
 from datetime import datetime, timedelta, timezone
+from dotenv import load_dotenv
 from pwdlib import PasswordHash
 from pwdlib.hashers.bcrypt import BcryptHasher
 from jose import jwt
 import os
+
+load_dotenv()
 
 # Secret key để mã hóa token
 SECRET_KEY = os.getenv("JWT_SECRET")
