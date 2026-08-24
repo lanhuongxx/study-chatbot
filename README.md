@@ -1,52 +1,41 @@
-# 🎓 Study Chatbot - Backend API
+# 🤖 Study Chatbot - Backend API
 
-Hệ thống Backend API cho ứng dụng Chatbot hỗ trợ sinh viên giải đáp thắc mắc môn học/quy chế. Hệ thống kết hợp cơ chế **Rule-based Matching Engine** (truy vấn dữ liệu FAQ từ MongoDB) và **AI Fallback** (sử dụng Google Gemini API).
-
----
-
-## 🛠️ Công Nghệ Sử Dụng (Tech Stack)
-
-* **Language:** Python 3.13+
-* **Framework:** FastAPI
-* **Database:** MongoDB Atlas (Async Driver: `motor`)
-* **AI Model:** Google Gemini API (`google-genai` / `google-generativeai`)
-* **Authentication:** JWT (JSON Web Tokens), `pwdlib[bcrypt]`
-* **Environment Management:** `python-dotenv`
+Hệ thống API Backend cho Chatbot hỗ trợ học tập, tích hợp tìm kiếm FAQ thông minh từ cơ sở dữ liệu và tự động trả lời câu hỏi bằng Google Gemini API.
 
 ---
 
-## 🏗️ Cấu Trúc Thư Mục (Project Structure)
+## 🚀 Demo & Online Documentation
+
+* **Live API Base URL:** `https://study-chatbot-backend.onrender.com`
+* **Interactive API Docs (Swagger UI):** [https://study-chatbot-backend.onrender.com/docs](https://study-chatbot-backend.onrender.com/docs)
+
+---
+
+## 🛠️ Công Nghệ Sử Dụng
+
+* **Framework:** Python 3.12+ / FastAPI
+* **Database:** MongoDB Atlas (sử dụng `motor` làm async driver)
+* **LLM / AI Integration:** Google Gemini API (`google-genai` / `google-generativeai`)
+* **Authentication & Security:** JWT (JSON Web Tokens), Passlib (Bcrypt)
+* **Deployment:** Render (Web Service)
+
+---
+
+## 📂 Cấu Trúc Thư Mục Backend
 
 ```text
 backend/
 ├── app/
-│   ├── api/                   # Router endpoints (chat, faq, admin)
-│   │   ├── admin.py
-│   │   ├── chat.py
-│   │   └── faq.py
-│   ├── core/                  # Security, config & dependencies
-│   │   ├── dependencies.py
-│   │   └── security.py
-│   ├── models/                # Database models
-│   │   ├── chat_log.py
-│   │   └── faq.py
-│   ├── repositories/          # Data Access Layer (MongoDB queries)
-│   │   ├── admin_repository.py
-│   │   ├── chat_log_repository.py
-│   │   └── faq_repository.py
-│   ├── schemas/               # Pydantic Schemas (Validation)
-│   │   ├── admin.py
-│   │   ├── chat.py
-│   │   └── faq.py
-│   ├── services/              # Business Logic & External APIs
-│   │   ├── gemini_service.py
-│   │   └── rule_engine.py
-│   ├── database.py            # MongoDB Connection
-│   └── main.py                # FastAPI Application Entrypoint
-├── .env                       # Environment Variables (Not committed)
-├── init_admin.py              # Script khởi tạo Admin User mặc định
-├── requirements.txt           # Python dependencies
-└── README.md                  # Project Documentation
+│   ├── api/             # Các route API (chat, faqs, auth,...)
+│   ├── core/            # Config, security, dependencies
+│   ├── models/          # Schemas Pydantic
+│   ├── repositories/    # Xử lý truy vấn MongoDB
+│   ├── services/        # Logic nghiệp vụ (Gemini API, RAG/FAQ match)
+│   └── main.py          # Entry point chính của FastAPI
+├── .env.example         # File mẫu cấu hình biến môi trường
+├── Procfile             # File cấu hình lệnh chạy trên Render
+├── requirements.txt     # Danh sách thư viện Python
+└── seed_faqs.py         # Script khởi tạo dữ liệu FAQ mẫu
 
 ⚙️ Hướng Dẫn Cài Đặt & Chạy Local
 1. Yêu cầu tiên quyết
@@ -54,7 +43,10 @@ backend/
 - Tài khoản MongoDB Atlas (hoặc MongoDB Local)
 - Gemini API Key từ Google AI Studio
 
-2. Cài đặt môi trường
+2. Clone Repository & Chuyển Thư Mục
+git clone https://github.com/lanhuongxx/study-chatbot.git
+
+3. Cài đặt môi trường
 Khởi tạo và kích hoạt môi trường ảo:
 python -m venv .venv
 # Trên Windows:
@@ -65,20 +57,29 @@ source .venv/bin/activate
 Cài đặt các gói thư viện phụ thuộc:
 pip install -r requirements.txt
 
-3. Cấu hình file môi trường (.env)
+4. Cấu hình file môi trường (.env)
 Tạo file .env tại thư mục backend/ với nội dung mẫu:
 MONGODB_URL=mongodb+srv://<username>:<password>@cluster.mongodb.net/?retryWrites=true&w=majority
 GEMINI_API_KEY=your_gemini_api_key_here
-SECRET_KEY=super_secret_chatbot_key_2026
+JWT_SECRET=super_secret_chatbot_key_2026
+ALGORITHM=HS256
 
-4. Khởi tạo tài khoản Admin
-Chạy script để khởi tạo tài khoản Admin mặc định (admin / admin123):
+5. Khởi Tạo Tài Khoản Admin Mặc Định
+Chạy script để tạo tài khoản Admin ban đầu trong database:
+```bash
 python init_admin.py
 
-5. Khởi chạy Server
+6. Nạp dữ liệu FAQ Mẫu (Optional)
+python seed_faqs.py
+
+7. Khởi chạy Server
 uvicorn app.main:app --reload
 
 API Server: http://127.0.0.1:8000
 
 Interactive API Docs (Swagger UI): http://127.0.0.1:8000/docs
 
+NOTE: 
+Để kết nối Frontend tới Backend đã deploy, cập nhật Base URL API trong dự án Frontend thành
+[https://study-chatbot-backend.onrender.com](https://study-chatbot-backend.onrender.com)
+CORS đã được cấu hình cho phép toàn bộ requests.
