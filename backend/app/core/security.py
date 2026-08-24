@@ -5,7 +5,9 @@ from jose import jwt
 import os
 
 # Secret key để mã hóa token
-SECRET_KEY = os.getenv("SECRET_KEY", "super_secret_chatbot_key_2026")
+SECRET_KEY = os.getenv("JWT_SECRET")
+if not SECRET_KEY:
+    raise ValueError("LỖI BẢO MẬT: Chưa cấu hình JWT_SECRET trong file .env!")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 8
 

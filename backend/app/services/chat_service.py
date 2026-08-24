@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from app.repositories.faq_repository import FAQRepository
 from app.repositories.chat_log_repository import ChatLogRepository
 from app.services.gemini_service import GeminiService
@@ -39,5 +41,6 @@ class ChatService:
         # 5. Trả kết quả
         return {
             "answer": answer,
-            "source": source
+            "source": source,
+            "timestamp": datetime.now(timezone.utc)
         }

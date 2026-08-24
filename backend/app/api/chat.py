@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 from fastapi import APIRouter
 
 from app.schemas.chat import ChatRequest, ChatResponse
@@ -15,15 +13,10 @@ chat_service = ChatService()
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-
+async def chat_endpoint(request: ChatRequest):
     result = await chat_service.process_message(
         session_id=request.session_id,
         message=request.message
     )
 
-    return ChatResponse(
-        answer=result["answer"],
-        source=result["source"],
-        timestamp=datetime.now(timezone.utc)
-    )
+    return result
