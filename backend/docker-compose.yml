@@ -1,7 +1,7 @@
 services:
   backend:
     build: .
-    container_name: study_chatbot_backend
+    container_name: clouddocs_backend
     ports:
       - "8000:8000"
     env_file:
@@ -9,3 +9,13 @@ services:
     environment:
       - PORT=8000
     restart: always
+
+  # Sau này FE làm xong thì chỉ cần mở comment phần này ra:
+  # frontend:
+  #   build: ./frontend
+  #   container_name: clouddocs_frontend
+  #   ports:
+  #     - "80:80"
+  #   depends_on:
+  #     - backend
+  #   restart: always
