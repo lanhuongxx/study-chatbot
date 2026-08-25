@@ -21,30 +21,40 @@ class ChatService:
         message: str
     ) -> Dict[str, Any]:
 
-        # 1. Tìm FAQ
+        # 1. Tìm FAQ phù hợp từ DB
         faq = await self.faq_repository.find_matching(message)
 
-        # 2. Nếu có FAQ → Rule-based
+        # 2. Xây dựng context cho Gemini từ FAQ tìm được (nếu có)
+        faq_context = ""
         if faq:
-            answer = faq["answer"]
-            source = "rule"
+            faq_context = (
+                f"Câu hỏi FAQ: {faq.get('question')}\n"
+                f"Câu trả lời FAQ: {faq.get('answer')}"
+            )
 
-        # 3. Nếu không có FAQ → Gemini
-        else:
-            try:
-                answer = await self.gemini_service.generate_response(message)
-                source = "gemini"
+        # 3. Gửi câu hỏi kèm context sang Gemini để xử lý thông minh
+        try:
+            answer = await self.gemini_service.generate_response(
+                message=message,
+                faq_context=faq_context
+            )
+            source = "gemini"
 
-            except ClientError as e:
-                # Gemini Free Tier bị giới hạn request
-                if getattr(e, "code", None) == 429:
+        except ClientError as e:
+            # Xử lý trường hợp bị Rate Limit (Free Tier)
+            if getattr(e, "code", None) == 429:
+                # Nếu Gemini lỗi 429 nhưng có FAQ khớp, dùng tạm câu trả lời từ FAQ làm fallback
+                if faq:
+                    answer = faq["answer"]
+                    source = "rule_fallback"
+                else:
                     answer = (
                         "Hệ thống AI đang quá tải. "
                         "Bạn vui lòng thử lại sau ít phút."
                     )
                     source = "fallback"
-                else:
-                    raise
+            else:
+                raise
 
         # 4. Lưu lịch sử chat
         await self.chat_log_repository.create(
@@ -54,7 +64,7 @@ class ChatService:
             source=source
         )
 
-        # 5. Trả kết quả
+        # 5. Trả kết quả về Client
         return {
             "answer": answer,
             "source": source,
