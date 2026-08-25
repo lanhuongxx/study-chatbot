@@ -1,11 +1,29 @@
+import asyncio
 import os
+from typing import List
+
 from dotenv import load_dotenv
 from google import genai
+from google.genai import types
 
 load_dotenv()
 
 
 class GeminiService:
+
+    # Model dùng để tạo câu trả lời (chat)
+    CHAT_MODEL = "gemini-2.5-flash"
+
+    # Model dùng để tạo vector embedding (semantic search FAQ)
+    EMBEDDING_MODEL = "gemini-embedding-001"
+
+    # Số chiều vector embedding — 768 là đủ tốt cho semantic search
+    # quy mô nhỏ (vài chục - vài trăm FAQ) và rẻ hơn so với full 3072.
+    EMBEDDING_DIM = 768
+
+    # Thời gian tối đa (giây) chờ Gemini trả lời trước khi bỏ cuộc,
+    # tránh việc 1 request treo vô thời hạn làm nghẽn cả server.
+    REQUEST_TIMEOUT = 15
 
     def __init__(self):
         api_key = os.getenv("GEMINI_API_KEY")
@@ -65,9 +83,47 @@ YÊU CẦU:
 Hãy đánh giá tính liên quan của FAQ và trả lời câu hỏi sinh viên một cách tự nhiên, đúng trọng tâm nhất.
 """
 
-        response = self.client.models.generate_content(
-            model="gemini-2.5-flash",  # Lưu ý: nên dùng tên model chính thức như gemini-2.5-flash hoặc gemini-1.5-flash
-            contents=prompt
+        # QUAN TRỌNG: dùng client.aio (async thật sự) thay vì client.models
+        # (bản sync). Nếu gọi bản sync bên trong 1 hàm async, nó sẽ chiếm
+        # trọn event loop của Uvicorn và làm TREO toàn bộ server trong lúc
+        # chờ Gemini phản hồi — mọi request khác (kể cả không liên quan)
+        # đều bị block theo.
+        response = await asyncio.wait_for(
+            self.client.aio.models.generate_content(
+                model=self.CHAT_MODEL,
+                contents=prompt
+            ),
+            timeout=self.REQUEST_TIMEOUT
         )
 
         return response.text
+
+    async def embed_text(
+        self,
+        text: str,
+        task_type: str = "RETRIEVAL_QUERY"
+    ) -> List[float]:
+        """
+        Chuyển văn bản thành vector embedding để dùng cho semantic search.
+
+        task_type:
+        - "RETRIEVAL_DOCUMENT": dùng khi embed câu hỏi FAQ lưu vào DB
+          (lúc seed hoặc khi admin tạo/sửa FAQ).
+        - "RETRIEVAL_QUERY": dùng khi embed câu hỏi của sinh viên lúc
+          họ chat, để so khớp với các vector đã lưu.
+        Gemini tối ưu vector khác nhau tùy vai trò "tài liệu" hay "truy vấn",
+        nên phải khai báo đúng task_type ở từng phía để độ chính xác cao nhất.
+        """
+        result = await asyncio.wait_for(
+            self.client.aio.models.embed_content(
+                model=self.EMBEDDING_MODEL,
+                contents=text,
+                config=types.EmbedContentConfig(
+                    task_type=task_type,
+                    output_dimensionality=self.EMBEDDING_DIM,
+                ),
+            ),
+            timeout=self.REQUEST_TIMEOUT
+        )
+
+        return result.embeddings[0].values

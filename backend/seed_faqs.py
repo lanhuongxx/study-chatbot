@@ -4,6 +4,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 
+from app.services.gemini_service import GeminiService
+
 # Load môi trường từ .env
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
@@ -612,11 +614,38 @@ SAMPLE_FAQS = [
 
 ]
 
+async def embed_all_faqs(gemini_service: GeminiService) -> None:
+    """
+    Tạo embedding cho từng FAQ (dựa trên câu hỏi + keywords) và gán
+    thẳng vào dict trong SAMPLE_FAQS, để lưu luôn vào MongoDB cùng
+    lúc insert. Chạy tuần tự (không dùng asyncio.gather) để tránh
+    gọi quá nhiều request cùng lúc vào Gemini API và dễ debug nếu lỗi.
+    """
+    total = len(SAMPLE_FAQS)
+    for i, faq in enumerate(SAMPLE_FAQS, start=1):
+        text = faq["question"]
+        if faq.get("keywords"):
+            text += "\n" + "\n".join(faq["keywords"])
+
+        try:
+            faq["embedding"] = await gemini_service.embed_text(
+                text, task_type="RETRIEVAL_DOCUMENT"
+            )
+            print(f"  [{i}/{total}] ✅ Embedding OK: '{faq['question']}'")
+        except Exception as e:
+            print(f"  [{i}/{total}] ❌ Lỗi embedding '{faq['question']}': {e}")
+            faq["embedding"] = None
+
+
 async def seed_data():
     mongo_url = os.getenv("MONGODB_URL")
     if not mongo_url:
         print("❌ Lỗi: Không tìm thấy MONGODB_URL trong file .env!")
         return
+
+    print("⏳ Đang tạo embedding cho toàn bộ FAQ mẫu (cần GEMINI_API_KEY)...")
+    gemini_service = GeminiService()
+    await embed_all_faqs(gemini_service)
 
     client = AsyncIOMotorClient(mongo_url)
     db = client["study_chatbot_db"]
@@ -627,7 +656,7 @@ async def seed_data():
     print("🧹 Đã làm sạch collection 'faqs' cũ.")
 
     result = await collection.insert_many(SAMPLE_FAQS)
-    print(f"✅ Đã nạp thành công {len(result.inserted_ids)} câu hỏi FAQ mẫu chuẩn đề tài vào MongoDB Atlas!")
+    print(f"✅ Đã nạp thành công {len(result.inserted_ids)} câu hỏi FAQ mẫu (kèm embedding) vào MongoDB Atlas!")
 
 if __name__ == "__main__":
     asyncio.run(seed_data())

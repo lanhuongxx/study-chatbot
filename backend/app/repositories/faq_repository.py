@@ -1,3 +1,4 @@
+import math
 import os
 import re
 from typing import List, Optional
@@ -5,13 +6,21 @@ from typing import List, Optional
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient
 from unidecode import unidecode
-from rapidfuzz import fuzz
+
+from app.services.gemini_service import GeminiService
 
 
 def normalize_text(text: str) -> str:
     """
     Chuyển chữ thường, khử dấu tiếng Việt
     và xóa ký tự đặc biệt.
+
+    Lưu ý: chỉ dùng hàm này cho EXACT MATCH và KEYWORD MATCH (so khớp
+    ký tự y hệt). Không dùng để đo độ "giống nhau" giữa 2 câu khác nhau,
+    vì việc khử dấu tiếng Việt làm mất thông tin ngữ nghĩa quan trọng
+    (ví dụ "khoa học dữ liệu" và "kho học liệu" sau khi khử dấu trông
+    rất giống nhau về ký tự dù nghĩa hoàn toàn khác) — việc đo độ giống
+    về NGHĨA được giao cho embedding (semantic search) bên dưới.
     """
     if not text:
         return ""
@@ -24,11 +33,27 @@ def normalize_text(text: str) -> str:
     return text
 
 
+def cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
+    """Độ tương đồng cosine giữa 2 vector embedding, trong khoảng [-1, 1]."""
+    if not vec_a or not vec_b or len(vec_a) != len(vec_b):
+        return 0.0
+
+    dot = sum(a * b for a, b in zip(vec_a, vec_b))
+    norm_a = math.sqrt(sum(a * a for a in vec_a))
+    norm_b = math.sqrt(sum(b * b for b in vec_b))
+
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+
+    return dot / (norm_a * norm_b)
+
+
 class FAQRepository:
 
     def __init__(
         self,
-        db_client: Optional[AsyncIOMotorClient] = None
+        db_client: Optional[AsyncIOMotorClient] = None,
+        gemini_service: Optional[GeminiService] = None
     ):
         if db_client:
             self.db = db_client["study_chatbot_db"]
@@ -42,6 +67,34 @@ class FAQRepository:
             self.db = client["study_chatbot_db"]
 
         self.collection = self.db["faqs"]
+
+        # gemini_service dùng để tạo embedding cho semantic search.
+        # Optional vì một số nơi (vd CRUD admin thuần túy) không cần.
+        self.gemini_service = gemini_service
+
+    # =========================================================
+    # TẠO EMBEDDING CHO 1 FAQ (dùng khi tạo/sửa FAQ)
+    # =========================================================
+
+    async def _build_embedding(self, faq_data: dict) -> Optional[List[float]]:
+        if not self.gemini_service:
+            return None
+
+        text = faq_data.get("question", "")
+        keywords = faq_data.get("keywords") or []
+        if keywords:
+            text += "\n" + "\n".join(keywords)
+
+        if not text.strip():
+            return None
+
+        try:
+            return await self.gemini_service.embed_text(
+                text, task_type="RETRIEVAL_DOCUMENT"
+            )
+        except Exception as e:
+            print(f"⚠️ Không tạo được embedding cho FAQ: {e}")
+            return None
 
     # =========================================================
     # FORMAT FAQ DOCUMENT
@@ -126,6 +179,10 @@ class FAQRepository:
         faq_data: dict
     ) -> dict:
 
+        embedding = await self._build_embedding(faq_data)
+        if embedding:
+            faq_data["embedding"] = embedding
+
         result = await self.collection.insert_one(
             faq_data
         )
@@ -160,6 +217,16 @@ class FAQRepository:
 
         if not filtered_data:
             return await self.get_by_id(faq_id)
+
+        # Nếu question hoặc keywords thay đổi, embedding cũ không còn
+        # đúng nữa -> phải tạo lại, nếu không semantic search sẽ dùng
+        # nhầm vector cũ ứng với nội dung đã bị sửa.
+        if "question" in filtered_data or "keywords" in filtered_data:
+            current = await self.get_by_id(faq_id) or {}
+            merged = {**current, **filtered_data}
+            embedding = await self._build_embedding(merged)
+            if embedding:
+                filtered_data["embedding"] = embedding
 
         result = await self.collection.update_one(
             {
@@ -205,20 +272,42 @@ class FAQRepository:
     async def find_matching(
         self,
         message: str,
-        score_cutoff: float = 88.0  # [SỬA 1]: Nâng threshold lên 88 để chặn các câu gần giống
+        similarity_cutoff: float = 0.72,
+        margin: float = 0.04
     ) -> Optional[dict]:
+        """
+        Tìm FAQ phù hợp nhất với câu hỏi, theo 3 tầng tăng dần chi phí:
+
+        1. EXACT MATCH: câu hỏi giống hệt (sau khi chuẩn hoá) -> gần như
+           chắc chắn đúng, trả về ngay.
+        2. KEYWORD MATCH: tin nhắn chứa nguyên 1 keyword đã khai báo cho
+           FAQ -> rẻ, tín hiệu mạnh, trả về ngay.
+        3. SEMANTIC SEARCH (embedding): nếu 2 tầng trên không match,
+           đo độ giống NGHĨA (không phải giống ký tự) giữa câu hỏi và
+           từng FAQ bằng cosine similarity của vector embedding. Đây là
+           tầng thay thế cho fuzzy string-matching cũ — fuzzy chỉ so
+           ký tự nên dễ nhầm "khoa học dữ liệu" với "kho học liệu" (giống
+           ký tự, khác nghĩa); embedding hiểu nghĩa nên phân biệt được.
+
+        similarity_cutoff: điểm cosine tối thiểu để chấp nhận 1 match
+        (thang 0..1, threshold ~0.7-0.75 là hợp lý cho câu hỏi tiếng Việt
+        ngắn, có thể tinh chỉnh dựa trên log thực tế).
+
+        margin: điểm số của FAQ tốt nhất phải nhỉnh hơn FAQ tốt nhì ít
+        nhất "margin" thì mới được chấp nhận. Nếu 2 FAQ có điểm sát nhau,
+        nghĩa là câu hỏi mơ hồ giữa 2 chủ đề -> an toàn hơn là để Gemini
+        trả lời từ kiến thức chung thay vì đoán bừa 1 FAQ.
+        """
 
         if not message:
             return None
 
         normalized_message = normalize_text(message)
-
         if not normalized_message:
             return None
 
         cursor = self.collection.find({})
         faqs = await cursor.to_list(length=1000)
-
         if not faqs:
             return None
 
@@ -227,56 +316,76 @@ class FAQRepository:
         # -----------------------------------------------------
         for faq in faqs:
             question = normalize_text(faq.get("question", ""))
-            if not question:
-                continue
-
-            if normalized_message == question:
-                print(
-                    f"🎯 Exact FAQ match | Question: '{faq.get('question')}'"
-                )
+            if question and normalized_message == question:
+                print(f"🎯 Exact FAQ match | Question: '{faq.get('question')}'")
                 return self._format_faq_doc(faq)
 
         # -----------------------------------------------------
-        # 2. FUZZY MATCH (Đã thêm lọc từ khóa cốt lõi)
+        # 2. KEYWORD MATCH
         # -----------------------------------------------------
-        best_faq = None
-        highest_score = 0.0
+        for faq in faqs:
+            for kw in faq.get("keywords", []) or []:
+                kw_norm = normalize_text(kw)
+                if kw_norm and kw_norm in normalized_message:
+                    print(
+                        f"🔑 Keyword FAQ match | Keyword: '{kw}' | "
+                        f"Question: '{faq.get('question')}'"
+                    )
+                    return self._format_faq_doc(faq)
 
-        # [SỬA 2]: Tách danh sách từ trong tin nhắn user để kiểm tra
-        msg_words = set(normalized_message.split())
+        # -----------------------------------------------------
+        # 3. SEMANTIC SEARCH (embedding)
+        # -----------------------------------------------------
+        if not self.gemini_service:
+            print("⚠️ Chưa cấu hình GeminiService cho FAQRepository, bỏ qua semantic search.")
+            return None
+
+        try:
+            query_embedding = await self.gemini_service.embed_text(
+                message, task_type="RETRIEVAL_QUERY"
+            )
+        except Exception as e:
+            print(f"⚠️ Lỗi tạo embedding cho câu hỏi: {e}")
+            return None
+
+        best_faq = None
+        best_score = 0.0
+        second_best_score = 0.0
 
         for faq in faqs:
-            question = normalize_text(faq.get("question", ""))
-            if not question:
+            faq_embedding = faq.get("embedding")
+            if not faq_embedding:
+                # FAQ này chưa có embedding (dữ liệu cũ trước khi nâng cấp,
+                # hoặc tạo qua API mà chưa cấu hình gemini_service).
+                # Cần chạy lại seed_faqs.py để backfill.
                 continue
 
-            # [SỬA 3]: Lọc chặn False Positive giữa "khoa hoc du lieu" và "kho hoc lieu"
-            if "khoa" in msg_words and "lieu" in msg_words:
-                if "khoa hoc du lieu" not in question:
-                    continue  # Bỏ qua FAQ nếu thiếu cụm "khoa học dữ liệu"
+            score = cosine_similarity(query_embedding, faq_embedding)
 
-            # [SỬA 4]: Đổi thuật toán sang fuzz.ratio để so sánh chính xác theo thứ tự ký tự
-            score = fuzz.ratio(normalized_message, question)
-
-            if score > highest_score:
-                highest_score = score
+            if score > best_score:
+                second_best_score = best_score
+                best_score = score
                 best_faq = faq
+            elif score > second_best_score:
+                second_best_score = score
 
-        # -----------------------------------------------------
-        # 3. CHECK FUZZY SCORE
-        # -----------------------------------------------------
-        if best_faq and highest_score >= score_cutoff:
+        if (
+            best_faq
+            and best_score >= similarity_cutoff
+            and (best_score - second_best_score) >= margin
+        ):
             print(
-                f"🎯 Fuzzy FAQ match | Score: {highest_score:.1f}% | "
+                f"🎯 Semantic FAQ match | Score: {best_score:.3f} "
+                f"(2nd best: {second_best_score:.3f}) | "
                 f"Question: '{best_faq.get('question')}'"
             )
             return self._format_faq_doc(best_faq)
 
         # -----------------------------------------------------
-        # 4. KHÔNG CÓ FAQ PHÙ HỢP -> CHUYỂN GEMINI
+        # 4. KHÔNG CÓ FAQ PHÙ HỢP -> CHUYỂN GEMINI KIẾN THỨC CHUNG
         # -----------------------------------------------------
         print(
             f"🤖 No suitable FAQ match | Message: '{message}' | "
-            f"Best score: {highest_score:.1f}%"
+            f"Best score: {best_score:.3f} (2nd: {second_best_score:.3f})"
         )
         return None

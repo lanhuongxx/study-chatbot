@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Query, status, Depends  # <--- B�
 
 from app.schemas.faq import FAQCreate, FAQResponse
 from app.repositories.faq_repository import FAQRepository
+from app.services.gemini_service import GeminiService
 from app.core.dependencies import require_admin  # <--- Import require_admin
 
 router = APIRouter(
@@ -10,7 +11,9 @@ router = APIRouter(
     tags=["FAQ Management"]
 )
 
-faq_repo = FAQRepository()
+# Truyền gemini_service để FAQ tạo/sửa qua admin panel cũng có embedding
+# ngay lập tức, không cần chạy lại seed_faqs.py thủ công.
+faq_repo = FAQRepository(gemini_service=GeminiService())
 
 # GET FAQ cho phép sinh viên xem công khai (Không khóa)
 @router.get("", response_model=List[FAQResponse])

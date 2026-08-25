@@ -11,8 +11,9 @@ from app.services.gemini_service import GeminiService
 class ChatService:
 
     def __init__(self):
-        self.faq_repository = FAQRepository()
         self.gemini_service = GeminiService()
+        # Truyền gemini_service vào để FAQRepository dùng cho semantic search
+        self.faq_repository = FAQRepository(gemini_service=self.gemini_service)
         self.chat_log_repository = ChatLogRepository()
 
     async def process_message(
