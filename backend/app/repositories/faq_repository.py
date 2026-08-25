@@ -272,31 +272,13 @@ class FAQRepository:
     async def find_matching(
         self,
         message: str,
-        similarity_cutoff: float = 0.72,
-        margin: float = 0.04
+        similarity_cutoff: float = 0.78,  # [TINH CHỈNH]: Tăng nhẹ từ 0.72 lên 0.78 để an toàn hơn
+        margin: float = 0.05             # [TINH CHỈNH]: Tăng khoảng cách an toàn giữa câu top 1 và top 2
     ) -> Optional[dict]:
         """
-        Tìm FAQ phù hợp nhất với câu hỏi, theo 3 tầng tăng dần chi phí:
-
-        1. EXACT MATCH: câu hỏi giống hệt (sau khi chuẩn hoá) -> gần như
-           chắc chắn đúng, trả về ngay.
-        2. KEYWORD MATCH: tin nhắn chứa nguyên 1 keyword đã khai báo cho
-           FAQ -> rẻ, tín hiệu mạnh, trả về ngay.
-        3. SEMANTIC SEARCH (embedding): nếu 2 tầng trên không match,
-           đo độ giống NGHĨA (không phải giống ký tự) giữa câu hỏi và
-           từng FAQ bằng cosine similarity của vector embedding. Đây là
-           tầng thay thế cho fuzzy string-matching cũ — fuzzy chỉ so
-           ký tự nên dễ nhầm "khoa học dữ liệu" với "kho học liệu" (giống
-           ký tự, khác nghĩa); embedding hiểu nghĩa nên phân biệt được.
-
-        similarity_cutoff: điểm cosine tối thiểu để chấp nhận 1 match
-        (thang 0..1, threshold ~0.7-0.75 là hợp lý cho câu hỏi tiếng Việt
-        ngắn, có thể tinh chỉnh dựa trên log thực tế).
-
-        margin: điểm số của FAQ tốt nhất phải nhỉnh hơn FAQ tốt nhì ít
-        nhất "margin" thì mới được chấp nhận. Nếu 2 FAQ có điểm sát nhau,
-        nghĩa là câu hỏi mơ hồ giữa 2 chủ đề -> an toàn hơn là để Gemini
-        trả lời từ kiến thức chung thay vì đoán bừa 1 FAQ.
+        Tìm FAQ phù hợp nhất theo 2 tầng:
+        1. EXACT MATCH: So khớp chính xác 100%.
+        2. SEMANTIC SEARCH (Embedding): Đo độ tương đồng ngữ nghĩa qua Cosine Similarity.
         """
 
         if not message:
@@ -312,7 +294,7 @@ class FAQRepository:
             return None
 
         # -----------------------------------------------------
-        # 1. EXACT MATCH
+        # 1. EXACT MATCH (So khớp chính xác tuyệt đối)
         # -----------------------------------------------------
         for faq in faqs:
             question = normalize_text(faq.get("question", ""))
@@ -321,23 +303,13 @@ class FAQRepository:
                 return self._format_faq_doc(faq)
 
         # -----------------------------------------------------
-        # 2. KEYWORD MATCH
+        # 2. SEMANTIC SEARCH (Tận dụng hoàn toàn Embedding)
         # -----------------------------------------------------
-        for faq in faqs:
-            for kw in faq.get("keywords", []) or []:
-                kw_norm = normalize_text(kw)
-                if kw_norm and kw_norm in normalized_message:
-                    print(
-                        f"🔑 Keyword FAQ match | Keyword: '{kw}' | "
-                        f"Question: '{faq.get('question')}'"
-                    )
-                    return self._format_faq_doc(faq)
-
-        # -----------------------------------------------------
-        # 3. SEMANTIC SEARCH (embedding)
-        # -----------------------------------------------------
+        # Bỏ qua Keyword Substring Match cũ vì nó là nguyên nhân gây False Positive.
+        # Hãy để Embedding chịu trách nhiệm hiểu ngữ nghĩa của toàn câu!
+        
         if not self.gemini_service:
-            print("⚠️ Chưa cấu hình GeminiService cho FAQRepository, bỏ qua semantic search.")
+            print("⚠️ Chưa cấu hình GeminiService cho FAQRepository, chuyển sang Gemini.")
             return None
 
         try:
@@ -355,9 +327,6 @@ class FAQRepository:
         for faq in faqs:
             faq_embedding = faq.get("embedding")
             if not faq_embedding:
-                # FAQ này chưa có embedding (dữ liệu cũ trước khi nâng cấp,
-                # hoặc tạo qua API mà chưa cấu hình gemini_service).
-                # Cần chạy lại seed_faqs.py để backfill.
                 continue
 
             score = cosine_similarity(query_embedding, faq_embedding)
@@ -369,6 +338,7 @@ class FAQRepository:
             elif score > second_best_score:
                 second_best_score = score
 
+        # Lọc theo Ngưỡng điểm và Khoảng cách an toàn (Margin)
         if (
             best_faq
             and best_score >= similarity_cutoff
@@ -382,10 +352,10 @@ class FAQRepository:
             return self._format_faq_doc(best_faq)
 
         # -----------------------------------------------------
-        # 4. KHÔNG CÓ FAQ PHÙ HỢP -> CHUYỂN GEMINI KIẾN THỨC CHUNG
+        # 3. KHÔNG CÓ FAQ PHÙ HỢP -> CHUYỂN GEMINI TRẢ LỜI
         # -----------------------------------------------------
         print(
             f"🤖 No suitable FAQ match | Message: '{message}' | "
-            f"Best score: {best_score:.3f} (2nd: {second_best_score:.3f})"
+            f"Best score: {best_score:.3f} (2nd: {second_best_score:.3f}) -> Forwarding to Gemini"
         )
         return None

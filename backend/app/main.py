@@ -159,7 +159,11 @@ async def get_messages():
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Hoặc dán URL Frontend sau khi deploy
+    allow_origins=[
+        "http://localhost:5173",
+        "https://study-chatbot-rjsr.onrender.com", # Cho phép tất cả domain Render
+        "*"                       # Hoặc tạm thời dùng "*" để test nhanh không lo chặn CORS
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
