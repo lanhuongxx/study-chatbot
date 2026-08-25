@@ -198,152 +198,85 @@ class FAQRepository:
 
         return result.deleted_count > 0
 
-    # =========================================================
+# =========================================================
     # FIND MATCHING FAQ
     # =========================================================
 
     async def find_matching(
         self,
         message: str,
-        score_cutoff: float = 80.0
+        score_cutoff: float = 88.0  # [SỬA 1]: Nâng threshold lên 88 để chặn các câu gần giống
     ) -> Optional[dict]:
-        """
-        Tìm FAQ phù hợp với câu hỏi của sinh viên.
-
-        Logic:
-
-        1. Exact match:
-           Câu hỏi giống hoàn toàn FAQ.
-
-        2. Fuzzy matching:
-           So sánh câu hỏi với TOÀN BỘ question của FAQ.
-
-        3. Nếu điểm tương đồng không đủ cao:
-           Trả về None để ChatService chuyển sang Gemini.
-
-        Không sử dụng keyword đơn lẻ để quyết định match.
-
-        Điều này tránh trường hợp:
-
-            FAQ:
-            "Lịch học môn Điện toán đám mây?"
-
-            User:
-            "Điện toán đám mây là gì?"
-
-        bị coi là cùng một câu hỏi chỉ vì
-        hai câu có chung cụm "Điện toán đám mây".
-        """
 
         if not message:
             return None
 
-        normalized_message = normalize_text(
-            message
-        )
+        normalized_message = normalize_text(message)
 
         if not normalized_message:
             return None
 
-        # =====================================================
-        # LẤY FAQ
-        # =====================================================
-
         cursor = self.collection.find({})
-
-        faqs = await cursor.to_list(
-            length=1000
-        )
+        faqs = await cursor.to_list(length=1000)
 
         if not faqs:
             return None
 
-        # =====================================================
+        # -----------------------------------------------------
         # 1. EXACT MATCH
-        # =====================================================
-
+        # -----------------------------------------------------
         for faq in faqs:
-
-            question = normalize_text(
-                faq.get("question", "")
-            )
-
+            question = normalize_text(faq.get("question", ""))
             if not question:
                 continue
 
             if normalized_message == question:
-
                 print(
-                    "🎯 Exact FAQ match | "
-                    f"Question: "
-                    f"'{faq.get('question')}'"
+                    f"🎯 Exact FAQ match | Question: '{faq.get('question')}'"
                 )
+                return self._format_faq_doc(faq)
 
-                return self._format_faq_doc(
-                    faq
-                )
-
-        # =====================================================
-        # 2. FUZZY MATCH
-        # =====================================================
-
+        # -----------------------------------------------------
+        # 2. FUZZY MATCH (Đã thêm lọc từ khóa cốt lõi)
+        # -----------------------------------------------------
         best_faq = None
         highest_score = 0.0
 
+        # [SỬA 2]: Tách danh sách từ trong tin nhắn user để kiểm tra
+        msg_words = set(normalized_message.split())
+
         for faq in faqs:
-
-            question = normalize_text(
-                faq.get("question", "")
-            )
-
+            question = normalize_text(faq.get("question", ""))
             if not question:
                 continue
 
-            # Chỉ so sánh với QUESTION.
-            #
-            # Không so sánh trực tiếp với keywords
-            # vì keyword có thể chỉ đại diện cho chủ đề
-            # và gây false positive.
+            # [SỬA 3]: Lọc chặn False Positive giữa "khoa hoc du lieu" và "kho hoc lieu"
+            if "khoa" in msg_words and "lieu" in msg_words:
+                if "khoa hoc du lieu" not in question:
+                    continue  # Bỏ qua FAQ nếu thiếu cụm "khoa học dữ liệu"
 
-            score = fuzz.token_sort_ratio(
-                normalized_message,
-                question
-            )
+            # [SỬA 4]: Đổi thuật toán sang fuzz.ratio để so sánh chính xác theo thứ tự ký tự
+            score = fuzz.ratio(normalized_message, question)
 
             if score > highest_score:
                 highest_score = score
                 best_faq = faq
 
-        # =====================================================
+        # -----------------------------------------------------
         # 3. CHECK FUZZY SCORE
-        # =====================================================
-
-        if (
-            best_faq
-            and highest_score >= score_cutoff
-        ):
-
+        # -----------------------------------------------------
+        if best_faq and highest_score >= score_cutoff:
             print(
-                "🎯 Fuzzy FAQ match | "
-                f"Score: {highest_score:.1f}% | "
-                f"Question: "
-                f"'{best_faq.get('question')}'"
+                f"🎯 Fuzzy FAQ match | Score: {highest_score:.1f}% | "
+                f"Question: '{best_faq.get('question')}'"
             )
+            return self._format_faq_doc(best_faq)
 
-            return self._format_faq_doc(
-                best_faq
-            )
-
-        # =====================================================
-        # 4. KHÔNG CÓ FAQ PHÙ HỢP
-        # =====================================================
-
+        # -----------------------------------------------------
+        # 4. KHÔNG CÓ FAQ PHÙ HỢP -> CHUYỂN GEMINI
+        # -----------------------------------------------------
         print(
-            "🤖 No suitable FAQ match | "
-            f"Message: '{message}' | "
-            f"Best score: "
-            f"{highest_score:.1f}%"
+            f"🤖 No suitable FAQ match | Message: '{message}' | "
+            f"Best score: {highest_score:.1f}%"
         )
-
-        # Trả None để ChatService gọi Gemini
         return None
