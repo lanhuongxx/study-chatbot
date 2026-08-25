@@ -1,0 +1,5 @@
+$kind: http-request
+name: GET /api/faqs
+url: https://study-chatbot-backend.onrender.com/api/faqs
+method: GET
+order: 1787613481775

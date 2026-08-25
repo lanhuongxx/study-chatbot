@@ -1,0 +1,13 @@
+$kind: http-request
+name: GET /api/history/{session_id}
+url: https://study-chatbot-backend.onrender.com/api/history/test-session-001
+method: GET
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"Status code is 200 OK\", function () {\r
+
+      \    pm.response.to.have.status(200);\r
+
+      });"
+    language: text/javascript
+order: 1787613453124

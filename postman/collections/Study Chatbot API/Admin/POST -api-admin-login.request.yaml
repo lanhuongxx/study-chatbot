@@ -1,0 +1,14 @@
+$kind: http-request
+name: POST /api/admin/login
+url: https://study-chatbot-backend.onrender.com/api/admin/login
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \  \"username\": \"admin\",\r
+
+    \  \"password\": \"admin123\"\r
+
+    }\r\n"
+order: 2615718989925224

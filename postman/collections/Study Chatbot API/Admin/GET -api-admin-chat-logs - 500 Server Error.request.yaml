@@ -1,0 +1,5 @@
+$kind: http-request
+name: GET /api/admin/chat-logs - 500 Server Error
+url: https://study-chatbot-backend.onrender.com/api/admin/chat-logs
+method: GET
+order: 969495694370206

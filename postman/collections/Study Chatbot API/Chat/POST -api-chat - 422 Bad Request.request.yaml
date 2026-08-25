@@ -1,0 +1,20 @@
+$kind: http-request
+name: POST /api/chat - 422 Bad Request
+url: https://study-chatbot-backend.onrender.com/api/chat
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \    \"session_id\": \"test-session-001\"\r
+
+    }"
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"Status code is 422\", function () {\r
+
+      \    pm.response.to.have.status(422);\r
+
+      });"
+    language: text/javascript
+order: 430168944525646

@@ -69,6 +69,8 @@ Chạy script để tạo tài khoản Admin ban đầu trong database:
 ```bash
 python init_admin.py
 
+=> Tài khoản: admin / Mật khẩu: admin123
+
 6. Nạp dữ liệu FAQ Mẫu (Optional)
 python seed_faqs.py
 

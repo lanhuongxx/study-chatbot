@@ -1,0 +1,17 @@
+$kind: http-request
+name: GET /api/admin/chat-logs - 401 Unauthorized
+url: https://study-chatbot-backend.onrender.com/api/admin/chat-logs
+method: GET
+auth:
+  type: bearer
+  credentials:
+    token: sai_token_1
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"Status code is 401 Unauthorized\", function () {\r
+
+      \    pm.response.to.have.status(401);\r
+
+      });"
+    language: text/javascript
+order: 1787613505376

@@ -1,0 +1,50 @@
+$kind: http-request
+name: POST /api/chat - 200 OK
+url: https://study-chatbot-backend.onrender.com/api/chat
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \  \"session_id\": \"test-session-001\",\r
+
+    \  \"message\": \"Học phần này có bao nhiêu tín chỉ?\"\r
+
+    }"
+scripts:
+  - type: afterResponse
+    code: "// 1. Kiểm tra Status Code là 200 OK\r
+
+      pm.test(\"Status code is 200 OK\", function () {\r
+
+      \    pm.response.to.have.status(200);\r
+
+      });\r
+
+      \r
+
+      // 2. Kiểm tra Response Time dưới 40s (do server Render free tier mất ~37s phản hồi)\r
+
+      pm.test(\"Response time is acceptable\", function () {\r
+
+      \    pm.expect(pm.response.responseTime).to.be.below(40000);\r
+
+      });\r
+
+      \r
+
+      // 3. Kiểm tra cấu trúc dữ liệu trả về (answer, source, timestamp)\r
+
+      pm.test(\"Response has required fields\", function () {\r
+
+      \    var jsonData = pm.response.json();\r
+
+      \    pm.expect(jsonData).to.have.property('answer');\r
+
+      \    pm.expect(jsonData).to.have.property('source');\r
+
+      \    pm.expect(jsonData).to.have.property('timestamp');\r
+
+      });"
+    language: text/javascript
+order: 1787613146158
